@@ -1,0 +1,12 @@
+*~
+*.orig
+*.bak
+*.swp
+.DS_Store
+
+Buildinfo.properties
+external
+
+.idea/
+.vs/
+.vscode/
