@@ -116,9 +116,12 @@ namespace spm_db
         /// a DB will be created and affected groups will contain only available counters.
         /// If no counters are available, the group will not be included in the DB.
         ///
-        /// If components are missing, a DB will not be created.
+        /// If a custom formula counter references a token that cannot be resolved as a raw HW counter
+        /// or a GPA derived counter, that formula counter is silently dropped and the remaining valid
+        /// counters are still built. References to other formula counters are not supported.
         ///
-        /// In the event that a custom counter is missing required derived counters, a DB will not be created.
+        /// If a GPA counter has components that reference missing counters, those components are
+        /// silently stripped; the counter itself is still included if it can be computed.
         ///
         /// In the event that a counter cannot be computed due to a GPA failure
         /// or custom counter calculation failure, creation of the DB will succeed and the affected counter will not be included.
@@ -127,8 +130,6 @@ namespace spm_db
         ///
         /// @retval
         /// Ok on success.
-        /// @retval
-        /// ErrorNotFound if not all GPA derived counters required for computing custom counters are present.
         /// @retval
         /// ErrorUnavailable if GPA is not loaded.
         Result Build(std::unique_ptr<DerivedSpmDataBase>& out_derived_db);

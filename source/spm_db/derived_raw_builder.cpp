@@ -9,6 +9,7 @@
 
 #include "derived_raw_builder.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <sstream>
@@ -78,7 +79,7 @@ namespace spm_db
 
         // Get the GPA index for the derived counter we're computing.
         GpaUInt32       gpa_counter_index = 0;
-        GpaCounterParam counter_param{true, gpa_counter_name.c_str()};
+        GpaCounterParam counter_param{true, {gpa_counter_name.c_str()}};
         GpaStatus       gpa_status = gpa_func_table->GpaCounterLibGetCounterIndex(gpa_counter_ctx_, &counter_param, &gpa_counter_index);
         if (gpa_status != kGpaStatusOk)
         {
@@ -107,7 +108,7 @@ namespace spm_db
         for (uint32_t i = 0; i < hw_counter_count; i++)
         {
             const GpaHwCounter& hw_counter = derived_counter_info->gpa_hw_counters[i];
-            auto                find_block = raw_db_.Counters().find(hw_counter.gpa_hw_block);
+            auto find_block = raw_db_.Counters().find(hw_counter.gpa_hw_block);
             if (find_block == raw_db_.Counters().end())
             {
                 return Result::ErrorNotFound;
@@ -132,41 +133,58 @@ namespace spm_db
             return Result::ErrorUnavailable;
         }
 
-        // check that all required derived counters required by formula counters are present as GPA counters.
-        for (const std::pair<const std::string, FormulaCounter>& name_formula_counter_pair : formula_counters_)
+        // Validate formula counters: remove any whose tokens can't be resolved rather than aborting.
+        // A non-operator, non-scalar token must resolve as either:
+        //   - a raw HW counter (NameToBlockAndEvent succeeds), or
+        //   - a GPA derived counter present in gpa_counters_.
+        // References to other formula counters are not accepted: EvalEnvironment resolves counters
+        // from the in-progress DerivedSpmDataBase, whose iteration order over an unordered_map is
+        // nondeterministic, making formula-to-formula dependencies unreliable.
         {
-            const FormulaCounter&   formula_counter = name_formula_counter_pair.second;
-            std::vector<Expression> stack;
-            std::stringstream       ss(formula_counter.formula);
-            for (std::string token; std::getline(ss, token, ',');)
+            std::vector<std::string> invalid_formula_counters;
+            for (const auto& [name, formula_counter] : formula_counters_)
             {
-                DerivedSpmTokenType type = MatchCounterFormulaToken(token);
-                if (type == kDerivedSpmTokenCounter)
+                bool valid = true;
+                std::stringstream ss(formula_counter.formula);
+                for (std::string token; std::getline(ss, token, ',');)
                 {
-                    auto block_and_instance = NameToBlockAndEvent(gpa_counter_ctx_, token);
-                    if (!block_and_instance.has_value())
+                    if (MatchCounterFormulaToken(token) != kDerivedSpmTokenCounter)
                     {
-                        if (gpa_counters_.find(token) == gpa_counters_.end())
-                        {
-                            return Result::ErrorNotFound;
-                        }
+                        continue;
+                    }
+                    auto block_and_instance = NameToBlockAndEvent(gpa_counter_ctx_, token);
+                    if (block_and_instance.has_value())
+                    {
+                        continue;  // Raw HW counter — verified present in raw_db_ by AddCustomFormulaCounter.
+                    }
+                    if (gpa_counters_.find(token) == gpa_counters_.end())
+                    {
+                        valid = false;
+                        break;
                     }
                 }
+                if (!valid)
+                {
+                    invalid_formula_counters.push_back(name);
+                }
+            }
+            for (const auto& name : invalid_formula_counters)
+            {
+                formula_counters_.erase(name);
             }
         }
 
-        // Check that all components are present.
-        for (const std::pair<const std::string, GpaCounter>& name_gpa_counter_pair : gpa_counters_)
+        // Validate GPA counter components: skip missing ones rather than aborting.
+        for (auto& [name, gpa_counter] : gpa_counters_)
         {
-            const GpaCounter& gpa_counter = name_gpa_counter_pair.second;
-            for (const Component& component : gpa_counter.components)
-            {
-                if (gpa_counters_.find(component.counter_name) == gpa_counters_.end() &&
-                    formula_counters_.find(component.counter_name) == formula_counters_.end())
-                {
-                    return Result::ErrorNotFound;
-                }
-            }
+            auto& components = gpa_counter.components;
+            components.erase(std::remove_if(components.begin(),
+                                            components.end(),
+                                            [&](const Component& c) {
+                                                return gpa_counters_.find(c.counter_name) == gpa_counters_.end() &&
+                                                       formula_counters_.find(c.counter_name) == formula_counters_.end();
+                                            }),
+                             components.end());
         }
 
         // Build the derived DB.
@@ -297,8 +315,8 @@ namespace spm_db
         }
 
         // Number of timestamps for which this derived counter has a value below 0. Used for correcting noisy data (see below).
-        uint32_t bad_value_count  = 0;
-        uint32_t good_value_count = 0;
+        uint32_t bad_value_count = 0;
+        out_contains_bad_values  = false;
 
         uint32_t hw_counter_count = counter.gpa_counter_info->gpa_hw_counter_count;
 
@@ -354,7 +372,6 @@ namespace spm_db
                     {
                         bad_value_count = 0;
                     }
-                    good_value_count++;
                 }
             }
 

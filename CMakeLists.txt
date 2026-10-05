@@ -2,7 +2,7 @@
 ### Copyright Advanced Micro Devices, Inc.
 ### SPDX-License-Identifier: MIT
 ###
-### \author AMD Developer Tools Team
+### @author AMD Developer Tools Team
 #######################################################################################################################
 
 cmake_minimum_required(VERSION 3.25)
