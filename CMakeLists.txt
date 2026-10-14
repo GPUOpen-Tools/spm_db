@@ -11,7 +11,7 @@ project(SpmDb)
 
 # Define version information
 set(SPMDB_MAJOR_VERSION 1)
-set(SPMDB_MINOR_VERSION 0)
+set(SPMDB_MINOR_VERSION 1)
 
 if (NOT SPMDB_PATCH_NUMBER)
     set(SPMDB_PATCH_NUMBER 0)
